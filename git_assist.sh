@@ -33,63 +33,72 @@ error() {
   echo "${RED}$1${RESET}" | tee -a "$LOG_FILE"
 }
 
-# ------------ Security and Build Check ------------
-highlight "🔧 Running Maven clean install..."
-if mvn clean install | tee -a "$LOG_FILE"; then
-  success "✅ Maven build succeeded."
-else
-  error "❌ Maven build failed. Exiting."
-  exit 1
-fi
-
-highlight "🔎 Running Snyk security test..."
-snyk_report_file="snyk-vuln-report.json"
-markdown_report_file="snyk-report.md"
-
-if snyk test --json > "$snyk_report_file"; then
-  success "✅ Snyk test completed."
-else
-  warn "⚠️ Snyk reported vulnerabilities. Analyzing..."
-fi
-
-if ! command -v jq &>/dev/null; then
-  error "❌ 'jq' is required but not installed. Please install 'jq' to parse Snyk output."
-  exit 1
-fi
-
-critical_count=$(jq '[.vulnerabilities[] | select(.severity == "critical")] | length' "$snyk_report_file")
-high_count=$(jq '[.vulnerabilities[] | select(.severity == "high")] | length' "$snyk_report_file")
-
-highlight "🛡️  Vulnerability Summary:"
-echo "Critical: $critical_count" | tee -a "$LOG_FILE"
-echo "High: $high_count" | tee -a "$LOG_FILE"
-
-highlight "📦 Affected Packages (Markdown Table):"
-echo "# Snyk Vulnerability Report" > "$markdown_report_file"
-echo "" >> "$markdown_report_file"
-echo "| Severity | Package | Current Version | Affected Versions | Title |" >> "$markdown_report_file"
-echo "|----------|---------|------------------|--------------------|-------|" >> "$markdown_report_file"
-
-report_table=$(jq -r '.vulnerabilities[] | "| \(.severity | ascii_upcase) | \(.packageName) | \(.version) | \(.vulnerableVersions) | \(.title) |"' "$snyk_report_file")
-
-# Print to CLI and save to file and log
-echo "$report_table" | tee -a "$markdown_report_file" | tee -a "$LOG_FILE"
-
-highlight "📄 Markdown report saved to: $markdown_report_file"
-echo "" | tee -a "$LOG_FILE"
-
-if [[ "$critical_count" -gt 0 ]]; then
-  error "🚨 Critical vulnerabilities detected. Cannot proceed."
-  exit 1
-fi
-
-if [[ "$high_count" -gt 0 ]]; then
-  warn "⚠️ High severity vulnerabilities found."
-  read -p "${YELLOW}Do you still want to continue? (y/n): ${RESET}" continue_high
-  if [[ "$continue_high" != "y" ]]; then
-    error "🚫 Process stopped due to high severity vulnerabilities."
+# ------------ Ask if build & snyk scan is needed ------------
+read -p "${YELLOW}Run 'mvn clean install'? (y/n): ${RESET}" run_mvn
+if [[ "$run_mvn" == "y" ]]; then
+  highlight "🔧 Running Maven clean install..."
+  if mvn clean install | tee -a "$LOG_FILE"; then
+    success "✅ Maven build succeeded."
+  else
+    error "❌ Maven build failed. Exiting."
     exit 1
   fi
+else
+  warn "⏩ Skipping Maven build."
+fi
+
+read -p "${YELLOW}Run 'snyk test'? (y/n): ${RESET}" run_snyk
+if [[ "$run_snyk" == "y" ]]; then
+  highlight "🔎 Running Snyk security test..."
+  snyk_report_file="snyk-vuln-report.json"
+  markdown_report_file="snyk-report.md"
+
+  if snyk test --json > "$snyk_report_file"; then
+    success "✅ Snyk test completed."
+  else
+    warn "⚠️ Snyk reported vulnerabilities. Analyzing..."
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    error "❌ 'jq' is required but not installed. Please install 'jq' to parse Snyk output."
+    exit 1
+  fi
+
+  critical_count=$(jq '[.vulnerabilities[] | select(.severity == "critical")] | length' "$snyk_report_file")
+  high_count=$(jq '[.vulnerabilities[] | select(.severity == "high")] | length' "$snyk_report_file")
+
+  highlight "🛡️  Vulnerability Summary:"
+  echo "Critical: $critical_count" | tee -a "$LOG_FILE"
+  echo "High: $high_count" | tee -a "$LOG_FILE"
+
+  highlight "📦 Affected Packages (Markdown Table):"
+  echo "# Snyk Vulnerability Report" > "$markdown_report_file"
+  echo "" >> "$markdown_report_file"
+  echo "| Severity | Package | Current Version | Affected Versions | Title |" >> "$markdown_report_file"
+  echo "|----------|---------|------------------|--------------------|-------|" >> "$markdown_report_file"
+
+  report_table=$(jq -r '.vulnerabilities[] | "| \(.severity | ascii_upcase) | \(.packageName) | \(.version) | \(.vulnerableVersions) | \(.title) |"' "$snyk_report_file")
+
+  echo "$report_table" | tee -a "$markdown_report_file" | tee -a "$LOG_FILE"
+
+  highlight "📄 Markdown report saved to: $markdown_report_file"
+  echo "" | tee -a "$LOG_FILE"
+
+  if [[ "$critical_count" -gt 0 ]]; then
+    error "🚨 Critical vulnerabilities detected. Cannot proceed."
+    exit 1
+  fi
+
+  if [[ "$high_count" -gt 0 ]]; then
+    warn "⚠️ High severity vulnerabilities found."
+    read -p "${YELLOW}Do you still want to continue? (y/n): ${RESET}" continue_high
+    if [[ "$continue_high" != "y" ]]; then
+      error "🚫 Process stopped due to high severity vulnerabilities."
+      exit 1
+    fi
+  fi
+else
+  warn "⏩ Skipping Snyk security test."
 fi
 
 # ------------- Git Assistant Begins -----------------
