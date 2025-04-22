@@ -36,6 +36,7 @@ run_mvn_clean_install() {
 }
 
 run_snyk_test() {
+  highlight "⚠️⚠️⚠️⚠️⚠️The Snyk Report you are getting from here does not cover the shaded or unmanaged dependencies⚠️⚠️⚠️⚠️⚠️"
   highlight "🔍 Running snyk test..."
   snyk_report_file="$REPORT_DIR/snyk-vuln-report.json"
   markdown_report_file="$REPORT_DIR/snyk-report.md"
@@ -78,6 +79,28 @@ run_snyk_test() {
 
 stage_and_commit() {
   highlight "📁 Checking for changes..."
+
+  # 🧠 Check if remote branch is ahead
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
+  remote_branch="origin/$current_branch"
+
+  git fetch origin "$current_branch" >/dev/null 2>&1
+
+  if git rev-parse --verify "$remote_branch" >/dev/null 2>&1; then
+    local_commit=$(git rev-parse "$current_branch")
+    remote_commit=$(git rev-parse "$remote_branch")
+    base_commit=$(git merge-base "$current_branch" "$remote_branch")
+
+    if [[ "$local_commit" != "$remote_commit" && "$remote_commit" == "$base_commit" ]]; then
+      warn "⚠️ Remote branch '$remote_branch' is ahead of your local '$current_branch'."
+      read -p "${YELLOW}Do you still want to continue staging and committing? (y/n): ${RESET}" proceed_commit
+      if [[ "$proceed_commit" != "y" ]]; then
+        error "🚫 Commit cancelled because local branch is behind."
+        return 1
+      fi
+    fi
+  fi
+
   git status | tee -a "$LOG_FILE"
   changed_items=$(git status --porcelain | awk '{print $2}')
   files_to_add=()
@@ -108,7 +131,6 @@ stage_and_commit() {
   git add "${files_to_add[@]}"
   success "✅ Files staged"
 
-  current_branch=$(git rev-parse --abbrev-ref HEAD)
   jira_ticket=$(echo "$current_branch" | grep -Eo 'FINDATA-[0-9]+' || true)
 
   if [[ -z "$jira_ticket" ]]; then
@@ -134,7 +156,7 @@ stage_and_commit() {
 
 push_to_remote() {
   current_branch=$(git rev-parse --abbrev-ref HEAD)
-  if [[ "$current_branch" =~ ^(main|develop|dev)$ ]]; then
+  if [[ "$current_branch" =~ ^(main|develop|dev|master)$ ]]; then
     warn "⚠️ You are on a protected branch: $current_branch"
     read -p "${YELLOW}Do you really want to push to '$current_branch'? (y/n): ${RESET}" push_protected
     if [[ "$push_protected" != "y" ]]; then
