@@ -155,6 +155,58 @@ push_to_remote() {
   success "✅ Push complete"
 }
 
+clean_merged_branches() {
+  highlight "🧹 Cleaning up remote merged branches..."
+
+  git fetch --all --prune
+
+  bases=("develop" "dev" "main" "master")
+  base_branch=""
+  for base in "${bases[@]}"; do
+    if git show-ref --verify --quiet "refs/remotes/origin/$base"; then
+      base_branch="$base"
+      break
+    fi
+  done
+
+  if [[ -z "$base_branch" ]]; then
+    error "❌ None of the base branches (develop/dev/main/master) found on remote."
+    return 1
+  fi
+
+  highlight "📥 Pulling latest for base branch: $base_branch"
+  git checkout "$base_branch" && git pull origin "$base_branch"
+
+  merged_branches=$(git branch -r --merged origin/"$base_branch" | grep -vE "origin/($base_branch|HEAD)" | sed 's/origin\///')
+
+  if [[ -z "$merged_branches" ]]; then
+    success "✅ No merged branches found to delete."
+    return 0
+  fi
+
+  echo "🌿 Merged branches into '$base_branch':"
+  echo "$merged_branches" | nl
+
+  read -p "${YELLOW}Do you want to delete these merged branches from remote? (y/n): ${RESET}" confirm_delete
+  if [[ "$confirm_delete" != "y" ]]; then
+    warn "⚠️ Deletion aborted by user."
+    return 0
+  fi
+
+  for branch in $merged_branches; do
+    if [[ "$branch" =~ ^(main|master|develop|dev)$ ]]; then
+      warn "⛔ Skipping protected branch: $branch"
+      continue
+    fi
+    if git push origin --delete "$branch" 2>&1 | tee -a "$LOG_FILE"; then
+      success "🗑️ Deleted: $branch"
+      echo "Deleted remote branch: $branch" >> "$LOG_FILE"
+    else
+      warn "⚠️ Failed to delete: $branch"
+    fi
+  done
+}
+
 # ---------- Main Loop -----------
 while true; do
   highlight "🎛️  Git Assistant Menu"
@@ -164,36 +216,28 @@ while true; do
   echo "  3) 📝 Stage and commit git changes"
   echo "  4) 🚀 Push to remote with branch protection"
   echo "  5) ⚙️ Execute All (1, 2, 3, 4)"
-  echo "  6) ❌ Exit"
+  echo "  6) 🧹 Clean merged remote branches"
+  echo "  7) ❌ Exit"
   read -p "${YELLOW}Enter your selection: ${RESET}" user_choice
 
   for option in $user_choice; do
     case $option in
-      1)
-        run_mvn_clean_install
-        ;;
-      2)
-        run_snyk_test
-        ;;
-      3)
-        stage_and_commit
-        ;;
-      4)
-        push_to_remote
-        ;;
+      1) run_mvn_clean_install ;;
+      2) run_snyk_test ;;
+      3) stage_and_commit ;;
+      4) push_to_remote ;;
       5)
         run_mvn_clean_install
         run_snyk_test
         stage_and_commit
         push_to_remote
         ;;
-      6)
+      6) clean_merged_branches ;;
+      7)
         success "👋 Exiting Git Assistant. Bye!"
         exit 0
         ;;
-      *)
-        warn "❓ Unknown option: $option"
-        ;;
+      *) warn "❓ Unknown option: $option" ;;
     esac
   done
 
