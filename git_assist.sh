@@ -35,6 +35,61 @@ run_mvn_clean_install() {
   fi
 }
 
+run_sonar_check() {
+  highlight "🧪 Running SonarQube scanner locally..."
+
+  if ! command -v jq &>/dev/null; then
+    error "❌ 'jq' is required for parsing SonarQube results. Install it and retry."
+    return 1
+  fi
+
+  if ! command -v sonar-scanner &>/dev/null; then
+    error "❌ 'sonar-scanner' is not installed or not in PATH."
+    return 1
+  fi
+
+  if [[ ! -f sonar-project.properties ]]; then
+    error "❌ sonar-project.properties file not found in the current directory."
+    return 1
+  fi
+
+  sonar-scanner -Dproject.settings=sonar-project.properties | tee -a "$LOG_FILE"
+
+  issues_json=".scannerwork/scanner-report/issues-report.json"
+  coverage_json=".scannerwork/scanner-report/coverage-report.json"
+
+  if [[ ! -f "$issues_json" || ! -f "$coverage_json" ]]; then
+    error "❌ SonarQube report not generated correctly. Expected files missing."
+    return 1
+  fi
+
+  coverage=$(grep -o '"line_coverage":[0-9.]*' "$coverage_json" | grep -o '[0-9.]*')
+  coverage_int=${coverage%.*}
+
+  critical_issues=$(grep -c '"severity":"CRITICAL"' "$issues_json" || echo 0)
+  blocker_issues=$(grep -c '"severity":"BLOCKER"' "$issues_json" || echo 0)
+  major_issues=$(grep -c '"severity":"MAJOR"' "$issues_json" || echo 0)
+
+  highlight "📊 Sonar Report Summary:"
+  echo "Coverage: $coverage%"
+  echo "Critical Issues: $critical_issues"
+  echo "Blocker Issues: $blocker_issues"
+  echo "Major Issues: $major_issues"
+
+  if (( coverage_int < 80 || critical_issues > 0 || blocker_issues > 0 || major_issues > 2 )); then
+    warn "⚠️ SonarQube validation failed: Low coverage or critical issues present."
+    read -p "Do you want to fix these issues before proceeding? (y/n): " sonar_fix
+    if [[ "$sonar_fix" == "y" ]]; then
+      error "⛔ Aborting to fix SonarQube issues."
+      return 1
+    else
+      warn "⚠️ Continuing despite SonarQube warnings."
+    fi
+  else
+    success "✅ SonarQube validation passed."
+  fi
+}
+
 run_snyk_test() {
   highlight "⚠️⚠️⚠️⚠️⚠️The Snyk Report you are getting from here does not cover the shaded or unmanaged dependencies⚠️⚠️⚠️⚠️⚠️"
   highlight "🔍 Running snyk test..."
@@ -234,28 +289,31 @@ while true; do
   highlight "🎛️  Git Assistant Menu"
   echo "Choose steps to run (e.g. 1 3 4):"
   echo "  1) 🔧 Run 'mvn clean install'"
-  echo "  2) 🔎 Run 'snyk test' and generate report"
-  echo "  3) 📝 Stage and commit git changes"
-  echo "  4) 🚀 Push to remote with branch protection"
-  echo "  5) ⚙️ Execute All (1, 2, 3, 4)"
-  echo "  6) 🧹 Clean merged remote branches"
-  echo "  7) ❌ Exit"
+  echo "  2) 🔧 Run 'sonar-scanner'"
+  echo "  3) 🔎 Run 'snyk test' and generate report"
+  echo "  4) 📝 Stage and commit git changes"
+  echo "  5) 🚀 Push to remote with branch protection"
+  echo "  6) ⚙️ Execute All (1, 2, 3, 4)"
+  echo "  7) 🧹 Clean merged remote branches"
+  echo "  8) ❌ Exit"
   read -p "${YELLOW}Enter your selection: ${RESET}" user_choice
 
   for option in $user_choice; do
     case $option in
       1) run_mvn_clean_install ;;
-      2) run_snyk_test ;;
-      3) stage_and_commit ;;
-      4) push_to_remote ;;
-      5)
+      2) run_sonar_check ;;
+      3) run_snyk_test ;;
+      4) stage_and_commit ;;
+      5) push_to_remote ;;
+      6)
         run_mvn_clean_install
+        run_sonar_check
         run_snyk_test
         stage_and_commit
         push_to_remote
         ;;
-      6) clean_merged_branches ;;
-      7)
+      7) clean_merged_branches ;;
+      8)
         success "👋 Exiting Git Assistant. Bye!"
         exit 0
         ;;
